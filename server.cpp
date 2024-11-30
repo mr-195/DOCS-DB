@@ -9,13 +9,12 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/epoll.h>
-
+#include"REPL.h"
 #define MAX_EVENTS 1024
 #define BUFFER_SIZE 4096
 #define PORT 6379
-
+REPL r;
 // Data store for key-value pairs
-std::unordered_map<std::string, std::string> data_store;
 
 // Client context to maintain parsing state
 struct ClientContext {
@@ -74,12 +73,12 @@ void handle_client(ClientContext& ctx) {
                     // Handle commands
                     std::string command = ctx.args[0];
                     if (command == "SET" && ctx.args.size() == 3) {
-                        data_store[ctx.args[1]] = ctx.args[2];
-                        send_response(ctx.fd, "+OK\r\n");
+                        if(r.SET(ctx.args[1],ctx.args[2])) send_response(ctx.fd, "+OK\r\n");
+                        else send_response(ctx.fd, "-ERR\r\n");
                     } else if (command == "GET" && ctx.args.size() == 2) {
-                        auto it = data_store.find(ctx.args[1]);
-                        if (it != data_store.end()) {
-                            std::string value = it->second;
+                        string value;
+                        auto res=r.GET(ctx.args[1],value);
+                        if (res) {
                             std::string response = "$" + std::to_string(value.size()) + "\r\n" + value + "\r\n";
                             send_response(ctx.fd, response);
                         } else {
@@ -119,6 +118,10 @@ void handle_client(ClientContext& ctx) {
         }
     }
 }
+void SIGHANDLER(int sig){
+    r.~REPL();
+    exit(0);
+}
 
 int main() {
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -126,7 +129,7 @@ int main() {
         perror("Socket creation failed");
         return -1;
     }
-
+    signal(SIGINT,SIGHANDLER);
     // Set socket options
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
