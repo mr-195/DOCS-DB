@@ -2,7 +2,7 @@
 #include<sys/sem.h>
 #include<filesystem>
 #include <bitset>
-#define MAX 60
+#define MAX 1000000
 #define MIN_TH 4
 #define MAX_TH 12
 #define NOFILTERS 3
