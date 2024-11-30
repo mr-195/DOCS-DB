@@ -44,7 +44,7 @@ bool REPL::SET(string& key,string& value){
         write_lock(0);
     }
     if(key.length()+value.length()>=MAX){
-        throw(runtime_error("Size > Max Threshold\nKey not inserted"));
+        // throw(runtime_error("Size > Max Threshold\nKey not inserted"));
         write_unlock(0);
         return 0;
     }
