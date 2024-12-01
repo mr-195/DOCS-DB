@@ -13,14 +13,12 @@
 #include <atomic>
 #include <condition_variable>
 #include "REPL.h"
-
+atomic_flag flag = ATOMIC_FLAG_INIT;
 #define MAX_EVENTS 1024
 #define BUFFER_SIZE 4096
 #define PORT 6379
 
 REPL r;  // Data store for key-value pairs
-
-std::mutex repl_mutex;  // Mutex to protect the shared REPL instance
 
 // Client context to maintain parsing state
 struct ClientContext {
@@ -101,6 +99,7 @@ void send_response(int fd, const std::string& response) {
 
 // Handle RESP parsing and command execution
 void handle_client(ClientContext& ctx) {
+    flag.clear(memory_order_release);
     while (true) {
         if (ctx.state == ClientContext::PARSE_TYPE) {
             if (ctx.buffer.empty()) {
@@ -130,12 +129,10 @@ void handle_client(ClientContext& ctx) {
                 } else {
                     std::string command = ctx.args[0];
                     if (command == "SET" && ctx.args.size() == 3) {
-                        std::lock_guard<std::mutex> lock(repl_mutex);  // Protect REPL access
                         if (r.SET(ctx.args[1], ctx.args[2])) send_response(ctx.fd, "+OK\r\n");
                         else send_response(ctx.fd, "-ERR\r\n");
                     } else if (command == "GET" && ctx.args.size() == 2) {
                         std::string value;
-                        std::lock_guard<std::mutex> lock(repl_mutex);  // Protect REPL access
                         auto res = r.GET(ctx.args[1], value);
                         if (res) {
                             std::string response = "$" + std::to_string(value.size()) + "\r\n" + value + "\r\n";
@@ -246,8 +243,9 @@ int main() {
                     ssize_t count;
                     while ((count = recv(fd, buffer, sizeof(buffer), 0)) > 0) {
                         ctx.buffer.append(buffer, count);
-                        thread_pool.enqueue([&ctx] { handle_client(ctx); });
                     }
+                    thread_pool.enqueue([&ctx] { handle_client(ctx); });
+                    while(flag.test_and_set(memory_order_acquire));
                     if (count == 0 || (count == -1 && errno != EAGAIN)) {
                         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
                         close(fd);
