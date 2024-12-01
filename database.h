@@ -2,7 +2,7 @@
 #include<sys/sem.h>
 #include<filesystem>
 #include <bitset>
-#define MAX 1000000
+#define MAX 4000'000
 #define MIN_TH 4
 #define MAX_TH 12
 #define NOFILTERS 3
@@ -19,7 +19,7 @@ extern string empty_string,TOMBSTONE;
 class BloomFilter {
 private:
     vector<hash<string>> filter;
-    bitset<1000> bitArray;
+    bitset<10000> bitArray;
 
 public:
     BloomFilter();
@@ -27,7 +27,6 @@ public:
     void add(const string& key);
     bool contains(string& key);
     void clear();
-    bitset<1000>& get();
 };
 class Database{
     protected:
@@ -61,6 +60,7 @@ class Database{
     void initialize_memtable();
     void append_to_WAL(string&,string&);
     void initialize_filter(int i,vector<BloomFilter>& filter,path& Tier);
+    void push_semaphores();
 };
 
 #endif
