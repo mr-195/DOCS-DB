@@ -13,7 +13,11 @@
 #include <atomic>
 #include <condition_variable>
 #include "REPL.h"
+<<<<<<< HEAD
 atomic_flag flag = ATOMIC_FLAG_INIT;
+=======
+int semid;
+>>>>>>> 7d5a229a5325d110651c88165e4794fa1f37fa91
 #define MAX_EVENTS 1024
 #define BUFFER_SIZE 4096
 #define PORT 6379
@@ -99,7 +103,11 @@ void send_response(int fd, const std::string& response) {
 
 // Handle RESP parsing and command execution
 void handle_client(ClientContext& ctx) {
+<<<<<<< HEAD
     flag.clear(memory_order_release);
+=======
+    V(semid);
+>>>>>>> 7d5a229a5325d110651c88165e4794fa1f37fa91
     while (true) {
         if (ctx.state == ClientContext::PARSE_TYPE) {
             if (ctx.buffer.empty()) {
@@ -175,10 +183,13 @@ void handle_client(ClientContext& ctx) {
 
 void SIGHANDLER(int sig) {
     r.~REPL();
+    semctl(semid,0,IPC_RMID,0);
     exit(0);
 }
 
 int main() {
+    semid=semget(IPC_PRIVATE,1,IPC_CREAT|0777);
+    semctl(semid,0,SETVAL,0);
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd == -1) {
         perror("Socket creation failed");
@@ -245,7 +256,11 @@ int main() {
                         ctx.buffer.append(buffer, count);
                     }
                     thread_pool.enqueue([&ctx] { handle_client(ctx); });
+<<<<<<< HEAD
                     while(flag.test_and_set(memory_order_acquire));
+=======
+                    P(semid);
+>>>>>>> 7d5a229a5325d110651c88165e4794fa1f37fa91
                     if (count == 0 || (count == -1 && errno != EAGAIN)) {
                         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
                         close(fd);

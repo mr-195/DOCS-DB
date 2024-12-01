@@ -1,64 +1,173 @@
-#include"REPL.h"
-bool REPL::GET(string &key,string& value){
-    read_lock(0);                                                   //locks for reading
-    if(filters[0][0].contains(key)){                                //checks if the key is there in the BloomFilter for memtable
-        auto pointer=memtable.find(key);                            //finds in the memtable, if it is there
-        if(pointer!=memtable.end()){                                
-            if (pointer->second!=TOMBSTONE) {                          //"\r\n" is used as TOMBSTONE, that is it is marked for deletion
-                read_unlock(0);
-                value=pointer->second;
-                return 1;
-            }
-            else{
-                read_unlock(0);
-                return 0;
-            }
-        }
-    }
-    read_unlock(0);
-    for(int i=1;i<(int)levels_main.size();++i){
-        read_lock(i);
-        for(int j=levels_main[i];j>0;--j){
-            if(filters[i][j-1].contains(key)){                      
-                auto res=Find(i,j,key,value);                           //calls Find function to find if BloomFliter contains it
-                if(res && value==TOMBSTONE){
-                    read_unlock(i);
-                    return 0;
-                }
-                else if(res){
-                    read_unlock(i);
-                    return 1;
-                }
-                continue;
-            }
-        }
-        read_unlock(i);
-    }
-    return 0;
-}
-bool REPL::SET(string& key,string& value){
-    write_lock(0);
-    while(flushrunning){
-        write_unlock(0);
-        T(flushid);                                                                         //checks if FLUSH is running, if so wait and unlock write for 0 for FLUSH to run
-        write_lock(0);
-    }
-    if(key.length()+value.length()>=MAX){                                                   //if the total length>=MAX, then raise error
-        write_unlock(0);
-        return 0;
-    }
-    append_to_WAL(key,value);                                                               //append to WAL
-    memtable[key]=value;                                                                    //insert it into memtable
-    mem_size+=key.length()+value.length();                                                  //increment memtable size to check whether it should be flushed
-    filters[0][0].add(key);                                                                 //add to BloomFilter
-    if(mem_size>=MAX){                                                                      //if mem_size>=MAX flush          
-        flushrunning=1;
-        V(flushid);
-        merge_unlock(0);
-    }
-    write_unlock(0);
-    return 1;
-}
-bool REPL::DELETE(string &key){                                                             //SET to TOMBSTONE for marking as deleted
-    return SET(key,TOMBSTONE);
-}
+#include<bits/stdc++.h>
+#include<sys/sem.h>
+#include<filesystem>
+#include<bitset>
+#define MAX 4000000
+#define MIN_TH 4
+#define MAX_TH 12
+#define NOFILTERS 3
+using namespace std;
+using namespace filesystem;
+using std::atomic;
+#ifndef HI
+#define HI
+extern struct sembuf vop, pop, top;
+#define V(semid) semop(semid, &vop, 1)
+#define P(semid) semop(semid, &pop, 1)
+#define T(semid) semop(semid, &top, 1)
+extern string empty_string, TOMBSTONE;
+
+/**
+ * @class BloomFilter
+ * @brief Implements a probabilistic function with false-positive chances to check whether a key exists in a file.
+ */
+class BloomFilter {
+private:
+    vector<hash<string>> filter; ///< Hash functions for the Bloom filter.
+    bitset<10000> bitArray;      ///< Bit array to store hash results.
+
+public:
+    /**
+     * @brief Constructor to initialize the class variables.
+     */
+    BloomFilter();
+
+    /**
+     * @brief Adds a key to the Bloom filter.
+     * @param key The key to be added.
+     */
+    void add(const string& key);
+
+    /**
+     * @brief Checks if a key is present in the Bloom filter.
+     * @param key The key to be checked.
+     * @return True if the key is present; otherwise, false.
+     */
+    bool contains(string& key);
+
+    /**
+     * @brief Clears the Bloom filter.
+     */
+    void clear();
+};
+
+/**
+ * @class Database
+ * @brief Manages data storage and retrieval, supporting operations like compaction, flushing, and concurrency control.
+ */
+class Database {
+protected:
+    int flushid, compactid;                ///< IDs for flush and compaction semaphores.
+    bool destroy;                          ///< Indicates whether the database is being destroyed.
+    vector<vector<BloomFilter>> filters;   ///< Bloom filters for different tiers.
+    ofstream wal;                          ///< Write-ahead log (WAL) file stream.
+    map<string, string> memtable;          ///< In-memory key-value storage.
+    vector<int> levels_main;               ///< Stores the number of data files in Tier_i.
+    size_t mem_size;                       ///< Size of the in-memory table.
+    vector<int> semids, wsemids, wcount, rcount, reader, writer, mtx; ///< Semaphore and thread control variables.
+    bool flushrunning;                     ///< Flag indicating if a flush operation is in progress.
+    thread compact_main_thread, flush_thread; ///< Threads for compaction and flushing operations.
+
+    /**
+     * @brief Searches for a key in the database.
+     * @param tier The tier to search in.
+     * @param index The index within the tier.
+     * @param key The key to search for.
+     * @param value The value associated with the key, if found.
+     * @return True if the key is found; otherwise, false.
+     */
+    bool Find(int tier, int index, string& key, string& value);
+
+    /**
+     * @brief Performs a binary search within a file stream for a given key.
+     * @param In The primary input file stream.
+     * @param secondary An optional secondary file stream.
+     * @param entries The number of entries in the stream.
+     * @param key The key to search for.
+     * @param value The value associated with the key, if found.
+     * @return True if the key is found; otherwise, false.
+     */
+    bool binary_search(ifstream& In, ifstream& secondary, size_t entries, string& key, string& value);
+
+    /**
+     * @brief Main compaction process.
+     */
+    void compact_main();
+
+    /**
+     * @brief Flushes the in-memory table to SSTable storage.
+     */
+    void FLUSH();
+
+    /**
+     * @brief Constructor for the Database class.
+     */
+    Database();
+
+    /**
+     * @brief Destructor for the Database class.
+     */
+    ~Database();
+
+    /**
+     * @brief Renames files based on the nomenclature of the specified tier.
+     * @param oldPath The current file path.
+     * @param newPath The new file path.
+     * @param tier The tier number.
+     */
+    void Rename(path& oldPath, path& newPath, int tier);
+
+    /**
+     * @brief Performs compaction on a specific tier.
+     * @param tier The tier to compact.
+     */
+    void compact(int tier);
+
+    void write_lock(int tier);
+    void write_unlock(int tier);
+    void read_lock(int tier);
+    void read_unlock(int tier);
+    void merge_lock(int tier);
+    void merge_unlock(int tier);
+
+    /**
+     * @brief Retrieves the path to a specific tier directory. Creates it if it doesn't exist.
+     * @param tier The tier number.
+     * @param dir The resulting directory path.
+     */
+    void get_folder(int tier, path& dir);
+
+    /**
+     * @brief Initializes variables based on the data in a tier during database initialization.
+     * @param tier The tier number.
+     * @return True if initialization succeeds; otherwise, false.
+     */
+    bool initialize_folder(int tier);
+
+    /**
+     * @brief Initializes the in-memory table using the WAL.
+     */
+    void initialize_memtable();
+
+    /**
+     * @brief Appends a key-value pair to the WAL.
+     * @param key The key to append.
+     * @param value The value to append.
+     */
+    void append_to_WAL(string& key, string& value);
+
+    /**
+     * @brief Initializes the Bloom filters for a tier based on its data.
+     * @param tier The tier number.
+     * @param filter The Bloom filter vector to initialize.
+     * @param dir The directory path of the tier.
+     */
+    void initialize_filter(int tier, vector<BloomFilter>& filter, path& dir);
+
+    /**
+     * @brief Pushes semaphore configurations for new tiers and threads.
+     */
+    void push_semaphores();
+};
+
+#endif
