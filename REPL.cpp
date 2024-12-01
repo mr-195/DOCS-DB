@@ -16,7 +16,7 @@ bool REPL::GET(string &key,string& value){
         }
     }
     read_unlock(0);
-    for(int i=1;i<levels_main.size();++i){
+    for(int i=1;i<(int)levels_main.size();++i){
         read_lock(i);
         for(int j=levels_main[i];j>0;--j){
             if(filters[i][j-1].contains(key)){                      
