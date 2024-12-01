@@ -13,7 +13,7 @@
 #include <atomic>
 #include <condition_variable>
 #include "REPL.h"
-
+int semid;
 #define MAX_EVENTS 1024
 #define BUFFER_SIZE 4096
 #define PORT 6379
@@ -101,6 +101,7 @@ void send_response(int fd, const std::string& response) {
 
 // Handle RESP parsing and command execution
 void handle_client(ClientContext& ctx) {
+    V(semid);
     while (true) {
         if (ctx.state == ClientContext::PARSE_TYPE) {
             if (ctx.buffer.empty()) {
@@ -178,10 +179,13 @@ void handle_client(ClientContext& ctx) {
 
 void SIGHANDLER(int sig) {
     r.~REPL();
+    semctl(semid,0,IPC_RMID,0);
     exit(0);
 }
 
 int main() {
+    semid=semget(IPC_PRIVATE,1,IPC_CREAT|0777);
+    semctl(semid,0,SETVAL,0);
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd == -1) {
         perror("Socket creation failed");
@@ -246,8 +250,9 @@ int main() {
                     ssize_t count;
                     while ((count = recv(fd, buffer, sizeof(buffer), 0)) > 0) {
                         ctx.buffer.append(buffer, count);
-                        thread_pool.enqueue([&ctx] { handle_client(ctx); });
                     }
+                    thread_pool.enqueue([&ctx] { handle_client(ctx); });
+                    P(semid);
                     if (count == 0 || (count == -1 && errno != EAGAIN)) {
                         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
                         close(fd);
