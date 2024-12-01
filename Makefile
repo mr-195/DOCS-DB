@@ -6,7 +6,7 @@ CXXFLAGS = -Wall -std=c++17
 LIBRARY = libdatabase.a
 
 # Object files
-OBJ = database.o REPL.o
+OBJ = REPL.o database.o 
 
 # Target: Create the static library
 $(LIBRARY): $(OBJ)
